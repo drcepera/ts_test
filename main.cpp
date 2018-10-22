@@ -8,12 +8,13 @@
 #include <memory>
 #include <list>
 #include <cstdlib>
+#include <fstream>
 
 using namespace std;
 
 #define MAX_N 300
 
-//#define DEBUG_OUT
+#define DEBUG_OUT
 #ifdef DEBUG_OUT
     #define DEBUG(x) do { std::cout << x << std::endl; } while (0)
 #else
@@ -33,8 +34,17 @@ struct city {
     bool operator <(const city& other) { return this->n < other.n; }
 };
 
-unordered_map<int, string> zonesNumbers;
+struct zone {
+    int n;
+    string name;
+    int firstCity;
+    int lastCity;
+};
+
+unordered_map<int, zone> N_zones;
 unordered_map<string, city> cities;
+int startZone;
+int startCity;
 
 // flight table [day][departure][arriving] of costs
 // dimension: Zones x Cities x Cities
@@ -65,57 +75,61 @@ void dumpFlightDayTable(const vector<vector<cost_t>> &costs) {
     }
 }
 
+const std::string filename = "";
+
 void init()
 {
+    std::istream *input = filename.empty() ? &cin : new ifstream(filename);
+
     std::string startCityName;
-    int zonesNumber;
-    cin >> zonesNumber >> startCityName;
+    *input >> N_zone >> startCityName;
     
-    DEBUG("num of zones: " << zonesNumber << ", start city: " << startCityName);
-    
-    // suppose start city is always in 0 city, in 0 zone
-    city startCity({N_cities++, N_zone++});
-    cities[startCityName] = startCity;
+    DEBUG("num of zones: " << N_zone << ", start city: " << startCityName);
     
     // read cities in zones
-    for( int i=0; i< zonesNumber; i++ ) {
-        string zoneName;
-        cin >> zoneName;
-        cin.ignore();
+    for( int i=0; i< N_zone; i++ ) {
+        zone newZone{i, "", N_cities, N_cities-1};
+        newZone.n = i;
+        *input >> newZone.name;
+        input->ignore();
         
         string citiesLine;
-        getline(cin, citiesLine);
+        getline(*input, citiesLine);
         istringstream iss(citiesLine);
         vector<string> cityNames{istream_iterator<string>{iss}, istream_iterator<string>{}};
         
-        int zoneNumber = ( find(cityNames.begin(), cityNames.end(), startCityName) != cityNames.end() ) ? 0 : (N_zone++);
-        zonesNumbers[zoneNumber] = zoneName;
-        
         for( auto cityName : cityNames ) {
-            if( cityName != startCityName ) {
-                city newCity({N_cities++, zoneNumber});
-                cities[cityName] = newCity;
-                DEBUG("city " << cityName << " number: " << cities[cityName].n << " zone: " << cities[cityName].zone);
-            }
-            else
+            city newCity({N_cities++, i});
+            cities[cityName] = newCity;
+            DEBUG("city " << cityName << " number: " << cities[cityName].n << " zone: " << cities[cityName].zone);
+
+            newZone.lastCity++;
+
+            if( cityName == startCityName ) {
+                startCity = newCity.n;
+                startZone = newCity.zone;
                 DEBUG("start city found: " << cityName << " number: " << cities[cityName].n << " zone: " << cities[cityName].zone);
+            }
         }
+
+        N_zones[i] = newZone;
+
+        DEBUG("zone " << N_zones[i].name << " #" << N_zones[i].n <<
+              " firstCity: " << N_zones[i].firstCity << " lastCity: " << N_zones[i].lastCity);
     }
-    
-    assert( zonesNumber == N_zone);
     
     // create flight table
     flightTable.reset(new vector<vector<vector<cost_t >>>(N_zone, vector<vector<cost_t>>(N_cities, vector<cost_t>(N_cities, 0))));
     
     // read flights
-    while( cin.good() ) {
+    while( input->good() ) {
         std::string dep;
         std::string arr;
         int day;
         cost_t cost;
         
-        cin >> dep >> arr >> day >> cost;
-        if( !cin.good() )
+        *input >> dep >> arr >> day >> cost;
+        if( !input->good() )
             break;
         
         DEBUG("departure: " << dep << "; arrives: " << arr << "; day: " << day << "; cost: " << cost);
@@ -143,13 +157,13 @@ vector<int> randomPermutation(int start, int stop) {
     return out;
 }
 
-unsigned int findPermutationCost(const vector<int> &perm) {
-    unsigned int sum = 0;
+//unsigned int findPermutationCost(const vector<int> &perm) {
+//    unsigned int sum = 0;
     
-    for(int i=0; i<perm.size(); i++) {
-        if( flightTable[])
-    }
-}
+//    for(int i=0; i<perm.size(); i++) {
+//        if( flightTable[])
+//    }
+//}
 
 int main(int argc, char **argv)
 {
