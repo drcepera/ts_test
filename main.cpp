@@ -15,7 +15,7 @@ using namespace std;
 
 #define MAX_N 300
 
-//const string filename = "../datasets/1.in";
+//const string filename = "../datasets/3.in";
 const string filename = "";
 
 //#define DEBUG_OUT
@@ -163,42 +163,52 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
     return false;
 }
 
-// full search preserving zone arrange
-bool greedyOnPredefinedZoneSequence(node* start, vector<int>::iterator path) {
-    vector<todayFlight> nextCities(zones[*path].lastCity - zones[*path].firstCity + 1, todayFlight(0, 0));
-    for( int i = 0; i < nextCities.size(); i++) {
-        nextCities[i] = todayFlight(zones[*path].firstCity + i, FLIGHT(start->day, start->city, zones[*path].firstCity + i));
+// random search through all cities but with respect to zones
+// zonesLeftToVisit - iterator on vector part with not visited yet cities
+bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
+    // hey! end of search!
+    if( start->day == N_zone )
+        return true;
+    
+    // Timeout
+    if( chrono::system_clock::now() - startTime >= Timeout ) {
+//        cout << "Timeout!";
+        return false;
     }
     
-    // thats why little bit greedy
-    // TODO: maybe better search min element than sort anytime ??
-    // and not to paste empty (cost=0) flights ?
-    sort(nextCities.begin(), nextCities.end());
-    for( auto &f : nextCities ) {
-        if( !f.cost )
-            break;
-    
-        start->nextNode = new node(start->day + 1, f.nextCity);
-    
-        if( *path == startZone ) { // start zone achieved
-            start->sum += f.cost;
-            return true;
+    // vector of cities
+    vector<todayFlight> nextCities;
+    nextCities.reserve(N_cities - start->day);  // upper limit
+    for( auto zoneIt = zonesLeftToVisit.begin() + start->day; zoneIt != zonesLeftToVisit.end(); zoneIt++) {
+        if(( *zoneIt != startZone ) || (  start->day == N_zone-1 )) {   // fly to start zone at the end only
+            for ( int i = zones[*zoneIt].firstCity; i <= zones[*zoneIt].lastCity; i++ ) {
+                if ( cost_t cost = FLIGHT(start->day, start->city, i) )
+                    nextCities.push_back(todayFlight(i, cost, zoneIt));
+            }
         }
+    }
+    
+    while( nextCities.size() ) {
+        unsigned int random = rand() % nextCities.size();
+        auto minCostFlight = nextCities.begin() + random;
         
-        vector<int>::iterator nextZone(path);
-        if( greedyOnPredefinedZoneSequence(start->nextNode, ++nextZone) ) {
-            start->sum = f.cost + start->nextNode->sum;
-            return true;    // success, path found!
+        start->nextNode = new node(start->day + 1, minCostFlight->nextCity );
+        
+        // change zones to leave in right part only not visited
+        iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + start->day );
+        if( greedyOnCities(start->nextNode, zonesLeftToVisit) ) {
+            start->sum = minCostFlight->cost + start->nextNode->sum;
+            return true;
         }
         else {
             delete start->nextNode;
             start->nextNode = nullptr;
+            // replace zones back
+            iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + start->day  );
+            nextCities.erase(minCostFlight);
             continue;
         }
     }
-    
-//    if( start->day > 1)
-//        cout << "break on day " << start->day << "\n";
     
     return false;
 }
@@ -315,47 +325,6 @@ vector<int> randomPermutation(const vector<int> inp) {
     return out;
 }
 
-vector<int> randomPermutation_zonesConnected(vector<int> inp) {
-    vector<int> out;
-    int curZone = startZone;
-    int day = 0;
-    while( inp.size() ) {
-        vector<int> temp = inp;
-        while ( temp.size( ) ) {
-            int randIndex = rand() % temp.size( );
-            int nextZone = temp[randIndex];
-            if ( zones[curZone].isConnected(day, zones[nextZone]) ) {
-                out.push_back(nextZone);
-                curZone = nextZone;
-                break;
-            }
-            else
-                temp.erase(temp.begin() + randIndex);
-        }
-        if( !temp.size() ) { // no next zone found
-            break;
-        }
-        else {
-            for( auto i = inp.begin(); i<inp.end(); i++ ) {
-                if( *i == *(out.end() - 1) ) {
-                    inp.erase(i);
-                    break;
-                }
-            }
-            continue;
-        }
-    }
-    return out;
-}
-
-//unsigned int findPermutationCost(const vector<int> &perm) {
-//    unsigned int sum = 0;
-    
-//    for(int i=0; i<perm.size(); i++) {
-//        if( flightTable[])
-//    }
-//}
-
 int main(int argc, char **argv)
 {
     startTime = chrono::system_clock::now();
@@ -389,23 +358,8 @@ int main(int argc, char **argv)
     while( chrono::system_clock::now() - startTime < Timeout ) {
         counter++;
         
-//        auto perm = randomPermutation(zonesWithoutStart);
-//        perm.push_back(startZone);
-    
-        int findZoneCounter = 0;
-        vector<int>perm;
-        while( chrono::system_clock::now() - startTime < Timeout ) {
-            findZoneCounter++;
-            perm = randomPermutation_zonesConnected(zonesWithoutStart);
-            if( (perm.size() == N_zone - 1 ) && zones[perm[perm.size()-1]].isConnected(N_zone - 1, zones[startZone]) ) {
-                perm.push_back(startZone);
-                break;
-            }
-        }
-    
-        DEBUG("Perm found counter: " << findZoneCounter << "\n");
-    
-        if( greedyOnPredefinedZoneSequence(&start, perm.begin( )) ) {
+        if( randomOnCities(&start, zonesWithStart) ) {
+           DEBUG("new sum : " << start.sum);
             if( start.sum < bestNode.sum ) {
                 if( bestNode.nextNode ) {
                     delete bestNode.nextNode;
