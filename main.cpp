@@ -15,8 +15,8 @@ using namespace std;
 
 #define MAX_N 300
 
-//const string filename = "../datasets/3.in";
-const string filename = "";
+const string filename = "../datasets/2.in";
+//const string filename = "";
 
 //#define DEBUG_OUT
 #ifdef DEBUG_OUT
@@ -44,7 +44,7 @@ struct city {
     bool operator <(const city& other) { return this->n < other.n; }
 };
 
-auto Timeout = chrono::milliseconds(3000-100);
+auto Timeout = chrono::milliseconds(3000 - 100);
 chrono::time_point<chrono::system_clock> startTime;
 
 struct zone {
@@ -359,14 +359,18 @@ int main(int argc, char **argv)
         counter++;
         
         if( randomOnCities(&start, zonesWithStart) ) {
-           DEBUG("new sum : " << start.sum);
             if( start.sum < bestNode.sum ) {
+                DEBUG("new sum : " << start.sum);
                 if( bestNode.nextNode ) {
                     delete bestNode.nextNode;
                     bestNode.nextNode = nullptr;
                 }
                 bestNode = start;
                 start = node(0, startCity);
+            }
+            else {
+                delete start.nextNode;
+                start.nextNode = nullptr;
             }
         }
     }
