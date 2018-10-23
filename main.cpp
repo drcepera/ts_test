@@ -15,7 +15,7 @@ using namespace std;
 
 #define MAX_N 300
 
-//const string filename = "../datasets/4.in";
+//const string filename = "../datasets/1.in";
 const string filename = "";
 
 //#define DEBUG_OUT
@@ -375,15 +375,14 @@ int main(int argc, char **argv)
             zonesWithoutStart.push_back(i);
     }
     
-    node bestNode(0, startCity);
-    bestNode.sum = std::numeric_limits<int>::max();
-    
     node start(0, startCity);
     
-    zonesWithoutStart.push_back(startZone);
-    if( greedyOnCities(&start, zonesWithoutStart) )
-        start.dumpAnswer();
-    return 0;
+    vector<int> zonesWithStart = zonesWithoutStart;
+    zonesWithStart.push_back(startZone);
+    greedyOnCities(&start, zonesWithStart);
+    
+    node bestNode = start;
+    start = node(0, startCity);
     
     int counter = 0;
     // timer on random search
