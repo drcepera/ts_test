@@ -15,7 +15,7 @@ using namespace std;
 
 #define MAX_N 300
 
-const string filename = "../datasets/2.in";
+const string filename = "../datasets/4.in";
 //const string filename = "";
 
 //#define DEBUG_OUT
@@ -23,6 +23,13 @@ const string filename = "../datasets/2.in";
     #define DEBUG(x) do { cout << x << endl; } while (0)
 #else
     #define DEBUG(x) ;
+#endif
+
+#define TIMEOUT_ENABLE
+#ifdef TIMEOUT_ENABLE
+#define TIMEOUT (chrono::system_clock::now() - startTime >= Timeout)
+#else
+#define TIMEOUT (false)
 #endif
 
 int N_cities;
@@ -74,7 +81,8 @@ struct node {
     int day;  // from 0 to N_zones - 1
     int city;
     node* nextNode;
-    int sum; // cost
+    cost_t cost;
+    int sum;
     
     node(int d, int c) : day(d), city(c), nextNode(nullptr), sum(0) {}
     
@@ -95,6 +103,18 @@ struct node {
     
             n = n->nextNode;
         }
+    }
+    
+    void dumpPath() {
+#ifdef DEBUG_OUT
+        cout << sum << ":\t" << endl;
+        node* n = this;
+        while( n ) {
+            cout << cities[n->city].n << " ";
+            n = n->nextNode;
+        }
+        cout << endl;
+#endif
     }
 };
 
@@ -122,8 +142,8 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
         return true;
     
     // Timeout
-    if( chrono::system_clock::now() - startTime >= Timeout ) {
-//        cout << "Timeout!";
+    if( TIMEOUT ) {
+        DEBUG("Timeout!");
         return false;
     }
     
@@ -139,7 +159,7 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
         }
     }
     
-    while( nextCities.size() ) {
+    while( nextCities.size()  && !TIMEOUT) {
         auto minCostFlight = min_element( nextCities.begin(), nextCities.end() );
         
         start->nextNode = new node(start->day + 1, minCostFlight->nextCity );
@@ -163,6 +183,63 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
     return false;
 }
 
+// search backward greedy with respect to zones
+node* greedyBackward(node *last, vector<int> &zonesLeftToVisit) {
+    // hey! end of search!
+    if( last->day == 1 ) {
+        if( cost_t cost = FLIGHT(0, startCity, last->city) ) {
+            node* start = new node(0, startCity);
+            start->sum = cost;
+            start->nextNode = last;
+            return start;
+        }
+        else
+            return nullptr;
+    }
+    
+    // Timeout
+    if( TIMEOUT ) {
+        DEBUG("Timeout!");
+        return nullptr;
+    }
+    
+    int numOfIter = N_zone - last->day;
+    
+    // vector of cities
+    vector<todayFlight> prevCities;
+    prevCities.reserve(N_cities - numOfIter);  // upper limit
+    for( auto zoneIt = zonesLeftToVisit.begin() + numOfIter; zoneIt != zonesLeftToVisit.end(); zoneIt++) {
+        for ( int i = zones[*zoneIt].firstCity; i <= zones[*zoneIt].lastCity; i++ ) {
+            if ( cost_t cost = FLIGHT(last->day-1, i, last->city) )
+                prevCities.push_back(todayFlight(i, cost, zoneIt));
+        }
+    }
+    
+    while( prevCities.size() ) {
+        auto minCostFlight = min_element( prevCities.begin(), prevCities.end() );
+    
+        node* prevNode = new node(last->day-1, minCostFlight->nextCity);
+        prevNode->nextNode = last;
+        
+        // change zones to leave in right part only not visited
+        iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + numOfIter );
+        if( node* start = greedyBackward(prevNode, zonesLeftToVisit) ) {
+            start->sum += minCostFlight->cost;
+            return start;
+        }
+        else {
+            prevNode->nextNode = nullptr;
+            delete prevNode;
+            // replace zones back
+            iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + numOfIter  );
+            prevCities.erase(minCostFlight);
+            continue;
+        }
+    }
+    
+    return nullptr;
+}
+
 // random search through all cities but with respect to zones
 // zonesLeftToVisit - iterator on vector part with not visited yet cities
 bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
@@ -171,8 +248,7 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
         return true;
     
     // Timeout
-    if( chrono::system_clock::now() - startTime >= Timeout ) {
-//        cout << "Timeout!";
+    if( TIMEOUT ) {
         return false;
     }
     
@@ -188,7 +264,8 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
         }
     }
     
-    while( nextCities.size() ) {
+    while( nextCities.size() && !TIMEOUT) {
+        
         unsigned int random = rand() % nextCities.size();
         auto minCostFlight = nextCities.begin() + random;
         
@@ -333,10 +410,6 @@ int main(int argc, char **argv)
     
     init();
     
-//    dumpFlightDayTable(flightTable->at(0));
-//    dumpFlightDayTable(flightTable->at(1));
-//    dumpFlightDayTable(flightTable->at(2));
-    
     vector<int> zonesWithoutStart;
     zonesWithoutStart.reserve(zones.size() - 1);
     for( int i=0; i<zones.size(); i++ ) {
@@ -346,20 +419,47 @@ int main(int argc, char **argv)
     
     node start(0, startCity);
     
+    // greedy forward
     vector<int> zonesWithStart = zonesWithoutStart;
     zonesWithStart.push_back(startZone);
     greedyOnCities(&start, zonesWithStart);
-    
     node bestNode = start;
-    start = node(0, startCity);
+    bestNode.dumpPath();
     
+    // greedy backward
+    for( int i = zones[startZone].firstCity; i<= zones[startZone].lastCity; i++ ) {
+
+        if( TIMEOUT )
+            break;
+
+        node* lastNode = new node(N_zone, i);
+        node* startNode = greedyBackward(lastNode, zonesWithoutStart);
+        if( startNode ) {
+            DEBUG("backward:");
+            startNode->dumpPath();
+
+            if( startNode->sum < bestNode.sum ) {
+                DEBUG("new sum (backward): " << startNode->sum);
+                if( bestNode.nextNode )
+                    delete bestNode.nextNode;
+                bestNode = *startNode;
+            }
+            else
+                delete startNode;
+        }
+        else
+            delete lastNode;
+    }
+    
+    // random
+    start = node(0, startCity);
     int counter = 0;
-    // timer on random search
-    while( chrono::system_clock::now() - startTime < Timeout ) {
+    while( !TIMEOUT ) {
         counter++;
         
         if( randomOnCities(&start, zonesWithStart) ) {
             if( start.sum < bestNode.sum ) {
+                start.dumpPath();
                 DEBUG("new sum : " << start.sum);
                 if( bestNode.nextNode ) {
                     delete bestNode.nextNode;
