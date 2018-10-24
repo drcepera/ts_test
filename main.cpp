@@ -18,7 +18,7 @@ using namespace std;
 const string filename = "../datasets/4.in";
 //const string filename = "";
 
-//#define DEBUG_OUT
+#define DEBUG_OUT
 #ifdef DEBUG_OUT
     #define DEBUG(x) do { cout << x << endl; } while (0)
 #else
@@ -100,7 +100,7 @@ struct node {
                  << cities[n->nextNode->city].name << " "
                  << n->day + 1 << " "
                  << FLIGHT(n->day, n->city, n->nextNode->city) << endl;
-    
+            
             n = n->nextNode;
         }
     }
@@ -117,6 +117,80 @@ struct node {
 #endif
     }
 };
+
+namespace pathLimits
+{
+// -- Limits for random evaluation --
+// worstDayCosts consists of biggest costs for today
+vector<cost_t> worstDayCosts;
+// worstCostsToTheEnd - upper limit for all cost from today to the end
+vector<int>    worstCostsToTheEnd;
+
+// bestDayCosts consists of chippest costs for today
+vector<cost_t> bestDayCosts;
+// worstCostsToTheEnd - bottom limit for all cost from today to the end
+vector<int>    bestCostsToTheEnd;
+
+// pathCostBestForDay consists of min found for this day cost
+vector<int> bestPathCostForDay;
+
+node bestNode(0, 0);
+
+void init( )
+{
+    worstDayCosts.reserve(N_zone);
+    bestDayCosts.reserve(N_zone);
+    for ( int i        = 0; i < N_zone; i++ ) {
+        cost_t min_cost = numeric_limits<cost_t>::max();
+        cost_t max_cost = 0;
+        for ( int j = 0; j < N_cities; j++ ) {
+            max_cost = max(max_cost, *max_element(flightTable->at(i)[j].begin( ), flightTable->at(i)[j].end( )));
+            
+            for(int k = 0; k < N_cities; k ++) {
+                cost_t flightCost = FLIGHT(i, j, k);
+                min_cost = !flightCost ? min_cost : min(flightCost, min_cost);
+            }
+        }
+        worstDayCosts.push_back(max_cost);
+        bestDayCosts.push_back(min_cost);
+    }
+    
+    worstCostsToTheEnd.resize(N_zone);
+    bestCostsToTheEnd.resize(N_zone);
+    worstCostsToTheEnd[N_zone - 1] = worstDayCosts[N_zone - 1];
+    bestCostsToTheEnd[N_zone - 1]  = bestDayCosts[N_zone - 1];
+    for ( int i = N_zone - 2; i >= 0; i-- ) {
+        worstCostsToTheEnd[i] = worstCostsToTheEnd[i + 1] + worstDayCosts[i];
+        bestCostsToTheEnd[i]  = bestCostsToTheEnd[i + 1] + bestDayCosts[i];
+    }
+    
+    bestPathCostForDay.resize(N_zone);
+    bestPathCostForDay[0] = worstDayCosts[0];
+    for( int i=1; i < N_zone; i++ ) {
+        bestPathCostForDay[i] = worstDayCosts[i] + bestPathCostForDay[i - 1];
+    }
+}
+
+#define CHECK_STATISTIC
+static int checkGood = 0;
+static int checkBad = 0;
+
+inline bool checkForLimits( int day, int currentCost ) {
+#ifdef CHECK_STATISTIC
+    if( currentCost + bestCostsToTheEnd[day] < bestNode.sum ) {
+        checkGood++;
+        return true;
+    }
+    else {
+        checkBad++;
+        return false;
+    }
+#else
+    return currentCost + bestCostsToTheEnd[day] < bestNode.sum;
+#endif
+}
+
+}   // namespace pathLimits
 
 // vector of next possible cities from path iterator
 struct todayFlight {
@@ -269,12 +343,21 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
         unsigned int random = rand() % nextCities.size();
         auto minCostFlight = nextCities.begin() + random;
         
-        start->nextNode = new node(start->day + 1, minCostFlight->nextCity );
+        node* next = new node(start->day + 1, minCostFlight->nextCity );
+        next->sum = start->sum + minCostFlight->cost;
+        if( pathLimits::checkForLimits(next->day, next->sum) )
+            start->nextNode = next;
+        else {
+            delete next;
+            nextCities.erase(minCostFlight);
+            continue;
+        }
         
         // change zones to leave in right part only not visited
         iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + start->day );
-        if( greedyOnCities(start->nextNode, zonesLeftToVisit) ) {
-            start->sum = minCostFlight->cost + start->nextNode->sum;
+        if( randomOnCities(start->nextNode, zonesLeftToVisit) ) {
+            // how preserve for any day its sum? swap?
+            start->sum = start->nextNode->sum;
             return true;
         }
         else {
@@ -382,6 +465,8 @@ void init()
         Timeout = chrono::milliseconds(5000 - reserve_ms);
     else
         Timeout = chrono::milliseconds(15000 - reserve_ms);
+    
+    pathLimits::init();
 }
 
 vector<int> randomPermutation(const vector<int> inp) {
@@ -423,8 +508,8 @@ int main(int argc, char **argv)
     vector<int> zonesWithStart = zonesWithoutStart;
     zonesWithStart.push_back(startZone);
     greedyOnCities(&start, zonesWithStart);
-    node bestNode = start;
-    bestNode.dumpPath();
+    pathLimits::bestNode = start;
+    pathLimits::bestNode.dumpPath();
     
     // greedy backward
     for( int i = zones[startZone].firstCity; i<= zones[startZone].lastCity; i++ ) {
@@ -438,11 +523,11 @@ int main(int argc, char **argv)
             DEBUG("backward:");
             startNode->dumpPath();
 
-            if( startNode->sum < bestNode.sum ) {
+            if( startNode->sum < pathLimits::bestNode.sum ) {
                 DEBUG("new sum (backward): " << startNode->sum);
-                if( bestNode.nextNode )
-                    delete bestNode.nextNode;
-                bestNode = *startNode;
+                if( pathLimits::bestNode.nextNode )
+                    delete pathLimits::bestNode.nextNode;
+                pathLimits::bestNode = *startNode;
             }
             else
                 delete startNode;
@@ -458,14 +543,14 @@ int main(int argc, char **argv)
         counter++;
         
         if( randomOnCities(&start, zonesWithStart) ) {
-            if( start.sum < bestNode.sum ) {
+            if( start.sum < pathLimits::bestNode.sum ) {
                 start.dumpPath();
                 DEBUG("new sum : " << start.sum);
-                if( bestNode.nextNode ) {
-                    delete bestNode.nextNode;
-                    bestNode.nextNode = nullptr;
+                if( pathLimits::bestNode.nextNode ) {
+                    delete pathLimits::bestNode.nextNode;
+                    pathLimits::bestNode.nextNode = nullptr;
                 }
-                bestNode = start;
+                pathLimits::bestNode = start;
                 start = node(0, startCity);
             }
             else {
@@ -475,9 +560,13 @@ int main(int argc, char **argv)
         }
     }
     
-    bestNode.dumpAnswer( );
+    pathLimits::bestNode.dumpAnswer( );
     
     DEBUG("Num of permutations: " << counter);
+    
+#ifdef CHECK_STATISTIC
+    cout << "good check limits: " << pathLimits::checkGood << "; bad check limits: " << pathLimits::checkBad << endl;
+#endif
     
     return 0;
 }
