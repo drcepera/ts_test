@@ -333,7 +333,8 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
         if(( *zoneIt != startZone ) || (  start->day == N_zone-1 )) {   // fly to start zone at the end only
             for ( int i = zones[*zoneIt].firstCity; i <= zones[*zoneIt].lastCity; i++ ) {
                 if ( cost_t cost = FLIGHT(start->day, start->city, i) )
-                    nextCities.push_back(todayFlight(i, cost, zoneIt));
+                    if( pathLimits::checkForLimits(start->day+1, start->sum + cost) )
+                        nextCities.push_back(todayFlight(i, cost, zoneIt));
             }
         }
     }
@@ -343,15 +344,8 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
         unsigned int random = rand() % nextCities.size();
         auto minCostFlight = nextCities.begin() + random;
         
-        node* next = new node(start->day + 1, minCostFlight->nextCity );
-        next->sum = start->sum + minCostFlight->cost;
-        if( pathLimits::checkForLimits(next->day, next->sum) )
-            start->nextNode = next;
-        else {
-            delete next;
-            nextCities.erase(minCostFlight);
-            continue;
-        }
+        start->nextNode = new node(start->day + 1, minCostFlight->nextCity );
+        start->nextNode->sum = start->sum + minCostFlight->cost;
         
         // change zones to leave in right part only not visited
         iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + start->day );
