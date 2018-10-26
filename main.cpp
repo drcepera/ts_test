@@ -10,12 +10,14 @@
 #include <cstdlib>
 #include <fstream>
 #include <chrono>
+#include <iomanip>
+#include <list>
 
 using namespace std;
 
 #define MAX_N 300
 
-const string filename = "../datasets/3.in";
+const string filename = "../datasets/1.in";
 //const string filename = "";
 
 #define DEBUG_OUT
@@ -43,14 +45,6 @@ typedef vector<vector<vector<cost_t >>> FlightTable;
 unique_ptr<FlightTable> flightTable;
 #define FLIGHT(day, from, to) (flightTable->at(day)[from][to])
 
-struct city {
-    int n;
-    int zone;
-    string name;
-    
-    bool operator <(const city& other) { return this->n < other.n; }
-};
-
 auto Timeout = chrono::milliseconds(3000 - 100);
 chrono::time_point<chrono::system_clock> startTime;
 
@@ -71,24 +65,84 @@ struct zone {
     }
 };
 
+struct city {
+    int n;
+    int zone;
+    string name;
+    
+    bool operator <(const city& other) { return this->n < other.n; }
+    
+    bool belongsToZone(int z);
+};
+
 vector<zone> zones;
 vector<city> cities;
 unordered_map<string, int> citiesName2Num;
 int startZone;
 int startCity;
 
+bool city::belongsToZone(int z) {
+    return( !( n < zones[z].firstCity ) && !( n > zones[z].lastCity ));
+}
+
 struct node {
     int day;  // from 0 to N_zones - 1
     int city;
     node* nextNode;
+    node* prevNode;
     int sum;
     int costTillDay;    // cost of all path flights till day this->day
     
-    node(int d, int c) : day(d), city(c), nextNode(nullptr), sum(0), costTillDay(0) {}
+    node(int d = 0, int c = 0) : day(d), city(c), nextNode(nullptr), prevNode(nullptr), sum(0), costTillDay(0) {}
+    
+    node (const node &n) = delete;   // : day(n.day), city(n.city), sum(n.sum), costTillDay(n.costTillDay), nextNode(nullptr), prevNode(nullptr) {}
+    
+    void initNode(const node &n)
+    {
+        day = n.day;
+        city = n.city;
+        sum = n.sum;
+        costTillDay = n.costTillDay;
+        nextNode = prevNode = nullptr;
+    }
+    
+    static node&& copy(const node &n)
+    {
+        node res;
+        res.initNode(n);
+        
+        // forward
+        node* from = n.nextNode;
+        node* temp = &res;
+        while( from ) {
+            temp->nextNode = new node;
+            temp->nextNode->initNode(*from);
+            from = from->nextNode;
+            temp = temp->nextNode;
+        }
+    
+        // backward
+        from = n.prevNode;
+        temp = &res;
+        while( from ) {
+            temp->prevNode = new node;
+            temp->prevNode->initNode(*from);
+            from = from->prevNode;
+            temp = temp->prevNode;
+        }
+        
+        return move(res);
+    }
     
     ~node() {
-        if( nextNode )
+        if( nextNode ) {
+            nextNode->prevNode = nullptr;
             delete nextNode;
+        }
+        if( prevNode ) {
+            prevNode->nextNode = nullptr;
+            delete prevNode;
+        }
     }
     
     void dumpAnswer() {
@@ -115,6 +169,46 @@ struct node {
         }
         cout << endl;
 #endif
+    }
+    
+    // with respect to zones visited
+    bool checkFlightTo(int to)
+    {
+        node* n = this;
+        while(n) {
+            if( cities[n->city].zone == (cities[to].zone) )
+                if( day != N_zone - 1 || cities[to].zone != startZone )
+                    return false;
+            n = n->prevNode;
+        }
+        return true;
+    }
+    
+    void applyFlight(int to, cost_t cost)
+    {
+        // copy this and insert between this and prevNode
+        if( prevNode ) {
+            prevNode->nextNode           = new node;
+            prevNode->nextNode->initNode(*this);
+            prevNode->nextNode->prevNode = prevNode;
+            prevNode->nextNode->nextNode = this;
+            prevNode = this->prevNode->nextNode;
+        }
+        else {
+            prevNode = new node;
+            prevNode->initNode(*this);
+            prevNode->nextNode = this;
+        }
+        
+        // fill this fields as next
+        this->day = prevNode->day+1;
+        this->costTillDay = prevNode->costTillDay + cost;
+        this->city = to;
+    }
+    
+    bool operator <(const node &other)
+    {
+        return costTillDay < other.costTillDay ;
     }
 };
 
@@ -542,6 +636,146 @@ vector<int> randomPermutation(const vector<int> inp) {
     return out;
 }
 
+vector<int> flightsPerDay;
+vector<double> growthCoefficients; // coefficients of growth of possible path if everything is equally distributed
+
+void updateGrowthCoefficients() {
+    flightsPerDay = vector<int>(N_zone, 0);
+    for( int i = 0; i < N_zone; i++ ) {
+        for( auto from : flightTable->at(i) )
+            flightsPerDay[i] += count_if( from.begin(), from.end(), [](cost_t cost){
+                return cost > 0;
+            });
+    }
+    
+    growthCoefficients = vector<double>(N_zone, 0);
+    for( int i = 0; i < N_zone; i++ ) {
+        double k = (float) flightsPerDay[i] / (N_cities * (N_cities - 1) ); // k - density of flights per day coefficient
+        double l = N_cities / N_zone; // l - cities per zone coefficient
+        if( i == N_zone - 1)
+            growthCoefficients[i] = k * l * 1;
+        else
+            growthCoefficients[i] = k * l * ( N_zone - i - 1 );
+    }
+
+#ifdef DEBUG_OUT
+    DEBUG("\nGrowth coef-s:");
+    for( int i = 0; i < N_zone; i++ )
+        DEBUG(i << " -> \t" << setprecision(6) << growthCoefficients[i]);
+    DEBUG("");
+#endif
+}
+
+void filterListProbabilistic(list<node>& paths, int maxLimit ) {
+    if( paths.size() <= maxLimit )
+        return;
+    
+    // calculate probabilities, pr_path = path.cost / allPathsCostSum
+    long allPathsCostSum = 0;
+    for( auto &node : paths )
+        allPathsCostSum += node.costTillDay;
+    
+    auto worstPath = max_element(paths.begin(), paths.end());
+    // find coefficient knowing biggest cost such that ( cost_biggest / allPathsCostSum * coef = 10 )
+    float coef = 10.f * allPathsCostSum/ worstPath->costTillDay;
+    
+    struct pathNumberAndProbability {
+        int path;
+        int probability;
+    };
+    
+    std::vector<pathNumberAndProbability> pr(paths.size());   // probabilities
+    auto it = paths.begin();
+    for( int i=0; i < paths.size(); i++ ) {
+        pr[i] = {i, (int) ceil(it->costTillDay * coef)};
+        it++;
+    }
+    
+    // sort probabilities in descending
+    sort(pr.begin(), pr.end(), [](pathNumberAndProbability &pr1, pathNumberAndProbability &pr2){
+        return pr1.probability > pr2.probability;
+    });
+    
+    vector<bool> pathsToErase(paths.size(), true); // vector of paths to erase
+    long randMod = allPathsCostSum * coef;
+    for( int i=0; i < maxLimit; i++ ) {
+        int pathNumToLeave = 0;
+        long randPoints = (rand() * (long) RAND_MAX + rand()) % randMod;
+        long partSum = 0;
+        for( int i=0; i < pr.size(); i++ ) {
+            if( !pathsToErase[i] )
+                continue;
+            partSum += pr[i].probability;
+            pathNumToLeave = i;
+            if( partSum >= randPoints )
+                break;
+            assert( i < pr.size() - 1 );
+        }
+        pathsToErase[pathNumToLeave] = false;
+        randMod -= pr[pathNumToLeave].probability;
+    }
+    
+    it = paths.begin();
+    for( int i=0; i<pathsToErase.size(); i++ ) {
+        auto temp = it++;
+        if( pathsToErase[i] ) {
+            paths.erase(it);
+        }
+        it = temp;
+    }
+}
+
+void probabilisticDynamic() {
+    const int M = 100;  // desired num of paths on exit
+    updateGrowthCoefficients();
+    
+    vector<int> desiredPathNumForDay = vector<int>(N_zone, M);
+    desiredPathNumForDay.back() = max((int) ceil(desiredPathNumForDay.back() /  growthCoefficients.back()), M);
+    for( int i = N_zone - 2; i > 0; i-- ) {
+        desiredPathNumForDay[i] = max((int) ceil(desiredPathNumForDay[i+1] /  growthCoefficients[i]), M);
+    }
+#ifdef DEBUG_OUT
+    DEBUG("\nDesired paths for day:");
+    for( int i = 0; i < N_zone; i++ )
+        DEBUG(i << " -> \t" << desiredPathNumForDay[i]);
+    DEBUG("");
+#endif
+    
+    list<node> inputList(1, node(0, startCity));
+    list<node> outputList;
+    for(int i=0; i<N_zone; i++) {
+        
+        // put all paths after this day flights into outputList
+        auto &dayFlights = flightTable->at(i);
+        for( int from = 0; from < N_cities; from++ ) {
+            for ( int to = 0; to < N_cities; to++ ) {
+                if ( to != from ) {
+                    if ( cost_t cost = dayFlights[from][to] ) {
+                        for ( auto & path : inputList ) {
+                            if( path.city == from ) {
+                                if( path.checkFlightTo(to) ) {
+                                    outputList.push_back(node::copy(path));
+                                    outputList.back().applyFlight(to, cost);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        DEBUG("day " << i << " out paths not filtered: " << outputList.size());
+        
+        if( i != N_zone - 1 ) {
+            filterListProbabilistic(outputList, desiredPathNumForDay[i + 1]);
+            swap(inputList, outputList);
+            outputList.clear( );
+        }
+        DEBUG("out paths filtered: " << inputList.size());
+    }
+    
+    DEBUG("paths on output: " << outputList.size());
+}
+
 int main(int argc, char **argv)
 {
     startTime = chrono::system_clock::now();
@@ -549,6 +783,9 @@ int main(int argc, char **argv)
     srand(time(NULL));
     
     init();
+    
+    probabilisticDynamic();
+    return 0;
     
 //    dumpFlightDayTable(flightTable->at(0));
     
