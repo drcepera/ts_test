@@ -17,10 +17,10 @@ using namespace std;
 
 #define MAX_N 300
 
-const string filename = "../datasets/1.in";
+const string filename = "../ts_test/datasets/2.in";
 //const string filename = "";
 
-#define DEBUG_OUT
+//#define DEBUG_OUT
 #ifdef DEBUG_OUT
     #define DEBUG(x) do { cout << x << endl; } while (0)
 #else
@@ -48,12 +48,25 @@ unique_ptr<FlightTable> flightTable;
 auto Timeout = chrono::milliseconds(3000 - 100);
 chrono::time_point<chrono::system_clock> startTime;
 
+template<typename T>
+void clearPtrList(list<T*> &l)
+{
+    for( auto i : l )
+        delete i;
+    l.clear();
+}
+
+template<typename T>
+bool lessPtr(T a1, T a2) {
+    return *a1 < *a2;
+}
+
 struct zone {
     int n;
     string name;
     int firstCity;
     int lastCity;
-    
+
     bool isConnected(int day, const zone &nextZone) {
         for( int i = firstCity; i <= lastCity; i++ ) {
             for( int j = nextZone.firstCity; j <= nextZone.lastCity; j++ ) {
@@ -69,9 +82,9 @@ struct city {
     int n;
     int zone;
     string name;
-    
+
     bool operator <(const city& other) { return this->n < other.n; }
-    
+
     bool belongsToZone(int z);
 };
 
@@ -92,48 +105,39 @@ struct node {
     node* prevNode;
     int sum;
     int costTillDay;    // cost of all path flights till day this->day
-    
-    node(int d = 0, int c = 0) : day(d), city(c), nextNode(nullptr), prevNode(nullptr), sum(0), costTillDay(0) {}
-    
-    node (const node &n) = delete;   // : day(n.day), city(n.city), sum(n.sum), costTillDay(n.costTillDay), nextNode(nullptr), prevNode(nullptr) {}
-    
-    void initNode(const node &n)
+
+    node(int d = 0, int c = 0, int s = 0, int cost = 0) : day(d), city(c), sum(s), costTillDay(cost)
+      , nextNode(nullptr), prevNode(nullptr) {}
+
+    explicit node (const node &n) : day(n.day), city(n.city), sum(n.sum), costTillDay(n.costTillDay), nextNode(nullptr), prevNode(nullptr)
     {
-        day = n.day;
-        city = n.city;
-        sum = n.sum;
-        costTillDay = n.costTillDay;
-        nextNode = prevNode = nullptr;
-    }
-    
-    static node&& copy(const node &n)
-    {
-        node res;
-        res.initNode(n);
-        
         // forward
         node* from = n.nextNode;
-        node* temp = &res;
+        node** to = &nextNode;
+        node *temp = this;
         while( from ) {
-            temp->nextNode = new node;
-            temp->nextNode->initNode(*from);
+            node* n = new node(from->day, from->city, from->sum, from->costTillDay);
+            *to = n;
+            n->prevNode = temp;
             from = from->nextNode;
-            temp = temp->nextNode;
+            to = &((*to)->nextNode);
+            temp = n;
         }
-    
+
         // backward
         from = n.prevNode;
-        temp = &res;
+        to = &prevNode;
+        temp = this;
         while( from ) {
-            temp->prevNode = new node;
-            temp->prevNode->initNode(*from);
+            node* n = new node(from->day, from->city, from->sum, from->costTillDay);
+            *to = n;
+            n->nextNode = temp;
             from = from->prevNode;
-            temp = temp->prevNode;
+            to = &((*to)->prevNode);
+            temp = n;
         }
-        
-        return move(res);
     }
-    
+
     ~node() {
         if( nextNode ) {
             nextNode->prevNode = nullptr;
@@ -144,21 +148,21 @@ struct node {
             delete prevNode;
         }
     }
-    
+
     void dumpAnswer() {
         cout << sum << endl;
-        
+
         node* n = this;
         while( n->nextNode ) {
             cout << cities[n->city].name << " "
                  << cities[n->nextNode->city].name << " "
                  << n->day + 1 << " "
                  << FLIGHT(n->day, n->city, n->nextNode->city) << endl;
-            
+
             n = n->nextNode;
         }
     }
-    
+
     void dumpPath() {
 #ifdef DEBUG_OUT
         cout << sum << ":\t" << endl;
@@ -170,7 +174,7 @@ struct node {
         cout << endl;
 #endif
     }
-    
+
     // with respect to zones visited
     bool checkFlightTo(int to)
     {
@@ -183,29 +187,28 @@ struct node {
         }
         return true;
     }
-    
+
     void applyFlight(int to, cost_t cost)
     {
         // copy this and insert between this and prevNode
         if( prevNode ) {
-            prevNode->nextNode           = new node;
-            prevNode->nextNode->initNode(*this);
-            prevNode->nextNode->prevNode = prevNode;
-            prevNode->nextNode->nextNode = this;
-            prevNode = this->prevNode->nextNode;
-        }
-        else {
-            prevNode = new node;
-            prevNode->initNode(*this);
+            node* temp = prevNode;
+            prevNode           = new node(day, city, sum, costTillDay);
+            temp->nextNode = prevNode;
+            prevNode->prevNode = temp;
             prevNode->nextNode = this;
         }
-        
+        else {
+            prevNode = new node(day, city, sum, costTillDay);
+            prevNode->nextNode = this;
+        }
+
         // fill this fields as next
         this->day = prevNode->day+1;
         this->costTillDay = prevNode->costTillDay + cost;
         this->city = to;
     }
-    
+
     bool operator <(const node &other)
     {
         return costTillDay < other.costTillDay ;
@@ -245,14 +248,14 @@ void init( )
         cost_t max_cost = 0;
         int flightsDayCostSumm = 0;
         int flightsDayCounter = 0;
-        
+
         for ( int j = 0; j < N_cities; j++ ) {
             max_cost = max(max_cost, *max_element(flightTable->at(i)[j].begin( ), flightTable->at(i)[j].end( )));
-            
+
             for(int k = 0; k < N_cities; k ++) {
                 cost_t flightCost = FLIGHT(i, j, k);
                 min_cost = !flightCost ? min_cost : min(flightCost, min_cost);
-                
+
                 if( flightCost ) {
                     flightsDayCostSumm += flightCost;
                     flightsDayCounter++;
@@ -263,24 +266,24 @@ void init( )
         bestDayCosts.push_back(min_cost);
         meanDayCosts.push_back(flightsDayCostSumm / flightsDayCounter);
     }
-    
+
     worstCostsToTheEnd.resize(N_zone);
     bestCostsToTheEnd.resize(N_zone);
     worstCostsToTheEnd[N_zone - 1] = worstDayCosts[N_zone - 1];
     bestCostsToTheEnd[N_zone - 1]  = bestDayCosts[N_zone - 1];
-    
+
     for ( int i = N_zone - 2; i >= 0; i-- ) {
         worstCostsToTheEnd[i] = worstCostsToTheEnd[i + 1] + worstDayCosts[i];
         bestCostsToTheEnd[i]  = bestCostsToTheEnd[i + 1] + bestDayCosts[i];
         bestCostsToTheEnd[i]  = bestCostsToTheEnd[i + 1] + bestDayCosts[i];
     }
-    
+
     meanCostsForDay.resize(N_zone);
     meanCostsForDay[0] = meanDayCosts[0];
     for( int i=1; i < N_zone; i++ ) {
         meanCostsForDay[i] = meanCostsForDay[i - 1] + meanDayCosts[i];
     }
-    
+
     bestPathCostForDay.resize(N_zone+1);
     bestPathCostForDay[0] = 0;
     for( int i=0; i < N_zone; i++ ) {
@@ -330,10 +333,10 @@ struct todayFlight {
     int nextCity;
     cost_t cost;
     vector<int>::iterator zoneIt;
-    
+
     todayFlight(int city, cost_t c) : nextCity(city), cost(c) {}
     todayFlight(int city, cost_t c, vector<int>::iterator zIt) : nextCity(city), cost(c), zoneIt(zIt) {}
-    
+
     bool operator < (const todayFlight &f2) {
         if( !f2.cost ) return true;
         if( !cost ) return false;
@@ -349,13 +352,13 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
         start->sum = start->costTillDay;
         return true;
     }
-    
+
     // Timeout
     if( TIMEOUT ) {
         DEBUG("Timeout!");
         return false;
     }
-    
+
     // vector of cities
     vector<todayFlight> nextCities;
     nextCities.reserve(N_cities - start->day);  // upper limit
@@ -367,17 +370,18 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
             }
         }
     }
-    
+
     while( nextCities.size()  && !TIMEOUT) {
         auto minCostFlight = min_element( nextCities.begin(), nextCities.end() );
-        
+
         start->nextNode = new node(start->day + 1, minCostFlight->nextCity );
         start->nextNode->costTillDay = start->costTillDay + minCostFlight->cost;
-        
+
         // change zones to leave in right part only not visited
         iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + start->day );
         if( greedyOnCities(start->nextNode, zonesLeftToVisit) ) {
             start->sum = start->nextNode->sum;
+            start->nextNode->prevNode = start;
             return true;
         }
         else {
@@ -389,7 +393,7 @@ bool greedyOnCities(node *start, vector<int> &zonesLeftToVisit) {
             continue;
         }
     }
-    
+
     return false;
 }
 
@@ -408,15 +412,15 @@ node* greedyBackward(node *last, vector<int> &zonesLeftToVisit) {
         else
             return nullptr;
     }
-    
+
     // Timeout
     if( TIMEOUT ) {
         DEBUG("Timeout!");
         return nullptr;
     }
-    
+
     int numOfIter = N_zone - last->day;
-    
+
     // vector of cities
     vector<todayFlight> prevCities;
     prevCities.reserve(N_cities - numOfIter);  // upper limit
@@ -426,18 +430,19 @@ node* greedyBackward(node *last, vector<int> &zonesLeftToVisit) {
                 prevCities.push_back(todayFlight(i, cost, zoneIt));
         }
     }
-    
+
     while( prevCities.size() ) {
         auto minCostFlight = min_element( prevCities.begin(), prevCities.end() );
-    
+
         node* prevNode = new node(last->day-1, minCostFlight->nextCity);
         prevNode->sum = last->sum + minCostFlight->cost;
         prevNode->nextNode = last;
-        
+
         // change zones to leave in right part only not visited
         iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + numOfIter );
         if( node* start = greedyBackward(prevNode, zonesLeftToVisit) ) {
             last->costTillDay = prevNode->costTillDay + minCostFlight->cost;
+            last->prevNode = prevNode;
             return start;
         }
         else {
@@ -449,7 +454,7 @@ node* greedyBackward(node *last, vector<int> &zonesLeftToVisit) {
             continue;
         }
     }
-    
+
     return nullptr;
 }
 
@@ -459,12 +464,12 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
     // hey! end of search!
     if( start->day == N_zone )
         return true;
-    
+
     // Timeout
     if( TIMEOUT ) {
         return false;
     }
-    
+
     // vector of cities
     vector<todayFlight> nextCities;
     nextCities.reserve(N_cities - start->day);  // upper limit
@@ -478,26 +483,26 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
             }
         }
     }
-    
+
     while( nextCities.size() && !TIMEOUT) {
-        
+
         unsigned int random = rand() % nextCities.size();
         auto minCostFlight = nextCities.begin() + random;
-        
+
         start->nextNode = new node(start->day + 1, minCostFlight->nextCity );
         start->nextNode->costTillDay = start->costTillDay + minCostFlight->cost;
         start->nextNode->sum = start->nextNode->costTillDay;
-        
+
         // change zones to leave in right part only not visited
         iter_swap( minCostFlight->zoneIt, zonesLeftToVisit.begin() + start->day );
 #ifdef RANDOM_TO_GREEDY
         if( start->day > 0 &&  // greedy filtered out flights less than found path for day 0
                 start->nextNode->costTillDay < pathLimits::bestPathCostForDay[start->nextNode->day] ) {
-            
+
             DEBUG("Random - found better cost for day. Go greedy! Day: " << start->nextNode->day << " -> " <<  start->nextNode->costTillDay << " vs "
                                                                          << pathLimits::bestPathCostForDay[start->nextNode->day]);
             pathLimits::bestPathCostForDay[start->nextNode->day] = start->nextNode->costTillDay;
-            
+
             if( greedyOnCities(start->nextNode, zonesLeftToVisit) ) {
                 start->sum = start->nextNode->sum;
                 return true;
@@ -518,7 +523,7 @@ bool randomOnCities(node *start, vector<int> &zonesLeftToVisit) {
             continue;
         }
     }
-    
+
     return false;
 }
 
@@ -528,7 +533,7 @@ void dumpFlightDayTable(const vector<vector<cost_t>> &costs) {
     for( auto c : cities )
         cout << c.name << "\t";
     cout << endl;
-    
+
     // rows
     for( auto c_dep : cities ) {
         cout << c_dep.name << "\t";
@@ -544,21 +549,21 @@ void init()
 
     string startCityName;
     *input >> N_zone >> startCityName;
-    
+
 //    DEBUG("num of zones: " << N_zone << ", start city: " << startCityName);
-    
+
     // read cities in zones
     for( int i=0; i< N_zone; i++ ) {
         zone newZone{i, "", N_cities, N_cities-1};
         newZone.n = i;
         *input >> newZone.name;
         input->ignore();
-        
+
         string citiesLine;
         getline(*input, citiesLine);
         istringstream iss(citiesLine);
         vector<string> cityNames{istream_iterator<string>{iss}, istream_iterator<string>{}};
-        
+
         for( auto cityName : cityNames ) {
             city newCity({N_cities++, i, cityName});
             cities.push_back(newCity);
@@ -571,7 +576,7 @@ void init()
                 startZone = newCity.zone;
 //                DEBUG("start city found: " << cityName << " number: " << cities[newCity.n].n << " zone: " << cities[newCity.n].zone);
             }
-    
+
             citiesName2Num[newCity.name] = newCity.n;
         }
 
@@ -580,21 +585,21 @@ void init()
 //        DEBUG("zone " << zones[i].name << " #" << zones[i].n <<
 //              " firstCity: " << zones[i].firstCity << " lastCity: " << zones[i].lastCity);
     }
-    
+
     // create flight table
     flightTable.reset(new vector<vector<vector<cost_t >>>(N_zone, vector<vector<cost_t>>(N_cities, vector<cost_t>(N_cities, 0))));
-    
+
     // read flights
     while( input->good() ) {
         string dep;
         string arr;
         int day;
         cost_t cost;
-        
+
         *input >> dep >> arr >> day >> cost;
         if( !input->good() )
             break;
-        
+
 //        DEBUG("departure: " << dep << "; arrives: " << arr << "; day: " << day << "; cost: " << cost);
         if( day ) {
             cost_t* c = &( FLIGHT(day - 1, citiesName2Num[dep], citiesName2Num[arr]) );
@@ -606,7 +611,7 @@ void init()
                 *c = (*c) ? min(*c, cost) : cost;
             }
     }
-    
+
     const int reserve_ms = 200;
     if( N_zone <= 20 && N_cities < 50 )
         Timeout = chrono::milliseconds(3000 - reserve_ms);
@@ -614,25 +619,25 @@ void init()
         Timeout = chrono::milliseconds(5000 - reserve_ms);
     else
         Timeout = chrono::milliseconds(15000 - reserve_ms);
-    
+
     pathLimits::init();
 }
 
 vector<int> randomPermutation(const vector<int> inp) {
     vector<int> out = inp;
-    
+
     for( int i = out.size()-1; i>0; i-- ) {
         int pos = rand() % i;
         swap(out[i], out[pos]);
     }
-    
+
 #ifdef DEBUG_OUT
     cout << "random perm: \n";
     for( auto c : out )
         cout << c << " ";
     cout << endl;
 #endif
-    
+
     return out;
 }
 
@@ -647,7 +652,7 @@ void updateGrowthCoefficients() {
                 return cost > 0;
             });
     }
-    
+
     growthCoefficients = vector<double>(N_zone, 0);
     for( int i = 0; i < N_zone; i++ ) {
         double k = (float) flightsPerDay[i] / (N_cities * (N_cities - 1) ); // k - density of flights per day coefficient
@@ -666,69 +671,116 @@ void updateGrowthCoefficients() {
 #endif
 }
 
-void filterListProbabilistic(list<node>& paths, int maxLimit ) {
+void filterListProbabilistic(list<node*>& paths, int maxLimit ) {
     if( paths.size() <= maxLimit )
         return;
-    
-    // calculate probabilities, pr_path = path.cost / allPathsCostSum
-    long allPathsCostSum = 0;
-    for( auto &node : paths )
-        allPathsCostSum += node.costTillDay;
-    
-    auto worstPath = max_element(paths.begin(), paths.end());
-    // find coefficient knowing biggest cost such that ( cost_biggest / allPathsCostSum * coef = 10 )
-    float coef = 10.f * allPathsCostSum/ worstPath->costTillDay;
-    
+
+#ifdef DEBUG_OUT
+    cout << endl << "Input costs: ";
+    for( auto p : paths )
+        cout << p->costTillDay << ", ";
+    cout << endl;
+#endif
+
+    // mean cost at input
+#ifdef DEBUG_OUT
+    int mean = 0;
+    for( auto p : paths)
+        mean += p->costTillDay;
+    cout << "mean on input: " << (float) mean / paths.size() << endl;
+#endif
+
+    auto worstPath = max_element(paths.begin(), paths.end(), lessPtr<node*>);
+    // find coefficient knowing biggest cost such that ( 1 / cost_biggest * coef = 100 )
+    float coef = 100 * (*worstPath)->costTillDay;
+
     struct pathNumberAndProbability {
         int path;
         int probability;
     };
-    
-    std::vector<pathNumberAndProbability> pr(paths.size());   // probabilities
+
+    list<pathNumberAndProbability> pr(paths.size());   // probabilities
     auto it = paths.begin();
-    for( int i=0; i < paths.size(); i++ ) {
-        pr[i] = {i, (int) ceil(it->costTillDay * coef)};
+    int i=0;
+    for( auto &prIt : pr ) {
+        prIt = {i, (int) ceil( 1.f / (*it)->costTillDay * coef)};
         it++;
+        i++;
     }
-    
+
+    // calculate probabilities sum
+    long allPathsCostSum = 0;
+    for( auto &p : pr )
+        allPathsCostSum += p.probability;
+    DEBUG("all points: " << allPathsCostSum);
+
     // sort probabilities in descending
-    sort(pr.begin(), pr.end(), [](pathNumberAndProbability &pr1, pathNumberAndProbability &pr2){
+    pr.sort([](pathNumberAndProbability &pr1, pathNumberAndProbability &pr2){
         return pr1.probability > pr2.probability;
     });
-    
-    vector<bool> pathsToErase(paths.size(), true); // vector of paths to erase
-    long randMod = allPathsCostSum * coef;
+
+#ifdef DEBUG_OUT
+    cout << endl << "Probabilities: ";
+    for( auto p : pr )
+        cout << p.path << " - " << p.probability << ", ";
+    cout << endl;
+#endif
+
+    long randMod = allPathsCostSum;
     for( int i=0; i < maxLimit; i++ ) {
-        int pathNumToLeave = 0;
         long randPoints = (rand() * (long) RAND_MAX + rand()) % randMod;
+        DEBUG("random points: " << randPoints);
         long partSum = 0;
-        for( int i=0; i < pr.size(); i++ ) {
-            if( !pathsToErase[i] )
-                continue;
-            partSum += pr[i].probability;
-            pathNumToLeave = i;
-            if( partSum >= randPoints )
+        for( auto p = pr.begin(); p != pr.end(); p++ ) {
+            partSum += p->probability;
+            if( partSum >= randPoints ) {
+                DEBUG("path: " << p->path);
+                randMod -= p->probability;
+                pr.erase(p);
                 break;
-            assert( i < pr.size() - 1 );
+            }
+            assert( p != pr.end() );
         }
-        pathsToErase[pathNumToLeave] = false;
-        randMod -= pr[pathNumToLeave].probability;
     }
-    
-    it = paths.begin();
-    for( int i=0; i<pathsToErase.size(); i++ ) {
-        auto temp = it++;
-        if( pathsToErase[i] ) {
-            paths.erase(it);
+
+    pr.sort([&](pathNumberAndProbability &pr1, pathNumberAndProbability &pr2){
+        return pr1.path < pr2.path;
+    });
+
+    // delete extra paths
+    auto pathIt = paths.begin();
+    auto erasePathIt = pr.begin();
+    int inputPathsSize = paths.size();
+    for( int i=0; i < inputPathsSize; i++ ) {
+        if( i == (*erasePathIt).path ) {
+            delete *pathIt;
+            paths.erase(pathIt++);
+            erasePathIt++;
         }
-        it = temp;
+        else
+            pathIt++;
     }
+
+    // mean cost at input
+#ifdef DEBUG_OUT
+    mean = 0;
+    for( auto p : paths)
+        mean += p->costTillDay;
+    cout << "mean on output: " << (float) mean / paths.size() << endl;
+#endif
+
+#ifdef DEBUG_OUT
+    cout << endl << "Output costs: ";
+    for( auto p : paths )
+        cout << p->costTillDay << ", ";
+    cout << endl;
+#endif
 }
 
 void probabilisticDynamic() {
     const int M = 100;  // desired num of paths on exit
     updateGrowthCoefficients();
-    
+
     vector<int> desiredPathNumForDay = vector<int>(N_zone, M);
     desiredPathNumForDay.back() = max((int) ceil(desiredPathNumForDay.back() /  growthCoefficients.back()), M);
     for( int i = N_zone - 2; i > 0; i-- ) {
@@ -740,64 +792,89 @@ void probabilisticDynamic() {
         DEBUG(i << " -> \t" << desiredPathNumForDay[i]);
     DEBUG("");
 #endif
-    
-    list<node> inputList(1, node(0, startCity));
-    list<node> outputList;
+
+    list<node*> inputList;
+    inputList.push_back(new node(0, startCity));
+    list<node*> outputList;
     for(int i=0; i<N_zone; i++) {
-        
+
+        if( TIMEOUT ) {
+            clearPtrList(inputList);
+            clearPtrList(outputList);
+            return;
+        }
+
         // put all paths after this day flights into outputList
         auto &dayFlights = flightTable->at(i);
-        for( int from = 0; from < N_cities; from++ ) {
-            for ( int to = 0; to < N_cities; to++ ) {
-                if ( to != from ) {
-                    if ( cost_t cost = dayFlights[from][to] ) {
-                        for ( auto & path : inputList ) {
-                            if( path.city == from ) {
-                                if( path.checkFlightTo(to) ) {
-                                    outputList.push_back(node::copy(path));
-                                    outputList.back().applyFlight(to, cost);
-                                }
-                            }
-                        }
+        for( auto path : inputList ) {
+            for( int to = 0; to < N_cities; to++ ) {
+                if( path->city == to )
+                    continue;
+                if( cost_t cost = dayFlights[path->city][to] ) {
+                    if( path->checkFlightTo(to) ) {
+                        outputList.push_back(new node(*path));
+                        outputList.back()->applyFlight(to, cost);
                     }
                 }
             }
         }
         DEBUG("day " << i << " out paths not filtered: " << outputList.size());
-        
+
+        if( TIMEOUT ) {
+            clearPtrList(inputList);
+            clearPtrList(outputList);
+            return;
+        }
+
         if( i != N_zone - 1 ) {
             filterListProbabilistic(outputList, desiredPathNumForDay[i + 1]);
+            DEBUG("out paths filtered: " << outputList.size());
             swap(inputList, outputList);
-            outputList.clear( );
+            clearPtrList(outputList);
         }
-        DEBUG("out paths filtered: " << inputList.size());
     }
-    
+
     DEBUG("paths on output: " << outputList.size());
+
+    outputList.sort(lessPtr<node*>);
+    DEBUG("best path cost: " << outputList.front()->costTillDay);
+
+    node* n = outputList.front();
+    n->sum = n->costTillDay;
+    while( n->prevNode ) {
+        n->prevNode->sum = n->sum;
+        n = n->prevNode;
+    }
+//    n->dumpAnswer();
+
+    if( pathLimits::bestNode.sum && (pathLimits::bestNode.sum > n->sum) ) {
+        delete pathLimits::bestNode.nextNode;
+        pathLimits::bestNode.nextNode = nullptr;
+        pathLimits::bestNode = *n;
+        outputList.erase(outputList.begin());
+    }
+
+    clearPtrList(inputList);
+    clearPtrList(outputList);
 }
 
 int main(int argc, char **argv)
 {
     startTime = chrono::system_clock::now();
-    
+
     srand(time(NULL));
-    
+
     init();
-    
-    probabilisticDynamic();
-    return 0;
-    
-//    dumpFlightDayTable(flightTable->at(0));
-    
+
     vector<int> zonesWithoutStart;
     zonesWithoutStart.reserve(zones.size() - 1);
     for( int i=0; i<zones.size(); i++ ) {
         if( i != startZone )
             zonesWithoutStart.push_back(i);
     }
-    
+
     node start(0, startCity);
-    
+
     // greedy forward
     vector<int> zonesWithStart = zonesWithoutStart;
     zonesWithStart.push_back(startZone);
@@ -805,7 +882,7 @@ int main(int argc, char **argv)
     pathLimits::bestNode = start;
     pathLimits::updateBestDayPaths(&pathLimits::bestNode);
     pathLimits::bestNode.dumpPath();
-    
+
     // greedy backward
     for( int i = zones[startZone].firstCity; i<= zones[startZone].lastCity; i++ ) {
 
@@ -817,57 +894,32 @@ int main(int argc, char **argv)
         if( startNode ) {
             DEBUG("backward:");
             startNode->dumpPath();
-    
+
             pathLimits::updateBestDayPaths(startNode);
 
             if( startNode->sum < pathLimits::bestNode.sum ) {
                 DEBUG("new sum (backward): " << startNode->sum);
-                if( pathLimits::bestNode.nextNode )
-                    delete pathLimits::bestNode.nextNode;
-                pathLimits::bestNode = *startNode;
-            }
-            else
-                delete startNode;
-        }
-        else
-            delete lastNode;
-    }
-    
-    // random
-    start = node(0, startCity);
-    int counter = 0;
-    int successCounter = 0;
-    while( !TIMEOUT ) {
-        counter++;
-        
-        if( randomOnCities(&start, zonesWithStart) ) {
-            pathLimits::updateBestDayPaths(&pathLimits::bestNode);
-            successCounter++;
-    
-            if( start.sum < pathLimits::bestNode.sum ) {
-                start.dumpPath();
-                DEBUG("new sum : " << start.sum);
                 if( pathLimits::bestNode.nextNode ) {
                     delete pathLimits::bestNode.nextNode;
                     pathLimits::bestNode.nextNode = nullptr;
                 }
-                pathLimits::bestNode = start;
-                start = node(0, startCity);
-            }
-            else {
-                delete start.nextNode;
-                start = node(0, startCity);
+                node *n = new node(*startNode);
+                pathLimits::bestNode = *n;
             }
         }
+        delete lastNode;
     }
-    
+
+    while( !TIMEOUT )
+        probabilisticDynamic();
+
     pathLimits::bestNode.dumpAnswer( );
-    
-    DEBUG("Num of permutations: " << counter << ", successfull of them: " << successCounter);
-    
-#ifdef LIMITS_STATISTICS
-    cout << "good check limits: " << pathLimits::checkGood << "; bad check limits: " << pathLimits::checkBad << endl;
-#endif
-    
+
+//    DEBUG("Num of permutations: " << counter << ", successfull of them: " << successCounter);
+
+//#ifdef LIMITS_STATISTICS
+//    cout << "good check limits: " << pathLimits::checkGood << "; bad check limits: " << pathLimits::checkBad << endl;
+//#endif
+
     return 0;
 }
