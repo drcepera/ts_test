@@ -17,8 +17,8 @@ using namespace std;
 
 #define MAX_N 300
 
-//const string filename = "../datasets/4.in";
-const string filename = "";
+const string filename = "../datasets/1.in";
+//const string filename = "";
 
 //#define DEBUG_OUT
 #ifdef DEBUG_OUT
@@ -897,23 +897,22 @@ void probabilisticDynamic() {
                     continue;
                 if( cost_t cost = dayFlights[path->city][to] ) {
                     if( path->checkFlightTo(to) ) {
-                        if( mustFilter ) {
-                            int costNext = path->costTillDay + cost;
-                            double factor = 1;
-                            if( costNext > meanPath ) {
-                                factor = (float) (worstPath - costNext) / ( worstPath - meanPath );
+                        if ( mustFilter ) {
+                            int    costNext = path->costTillDay + cost;
+                            double factor   = 1;
+                            if ( costNext > meanPath ) {
+                                factor = (float) (worstPath - costNext) / (worstPath - meanPath);
                             }
-                            else if( costNext < meanPath ) {
-                                factor = (costNext - bestPath + (float) n_inp / n_out * ( meanPath - costNext ))
-                                         / ( meanPath - bestPath );
+                            else if ( costNext < meanPath ) {
+                                factor = (costNext - bestPath + (float) n_inp / n_out * (meanPath - costNext)) / (meanPath - bestPath);
                             }
-                            long randMod = (factor > 0) ? (long) (n_inp / factor) : numeric_limits<long>::max();
-                            long num = (rand() * (long) RAND_MAX + rand()) % randMod;
-                            if( num > n_out )
+                            long randMod = (factor > 0) ? (long) (n_inp / factor) : numeric_limits<long>::max( );
+                            long num     = (rand( ) * (long) RAND_MAX + rand( )) % randMod;
+                            if ( num > n_out )
                                 continue;
                         }
                         outputList.push_back(new node(*path));
-                        outputList.back()->applyFlight(to, cost);
+                        outputList.back( )->applyFlight(to, cost);
                     }
                 }
             }
@@ -938,7 +937,7 @@ void probabilisticDynamic() {
 
     DEBUG("paths on output: " << outputList.size());
     
-    node* n = *(min_element(outputList.begin(), outputList.begin(), lessPtr<node*>));
+    node* n = *(min_element(outputList.begin(), outputList.end(), lessPtr<node*>));
     n->sum = n->costTillDay;
     while( n->prevNode ) {
         n->prevNode->sum = n->sum;
