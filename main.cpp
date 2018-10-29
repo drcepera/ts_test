@@ -797,6 +797,23 @@ void filterListRandom(list<node*>& paths, int maxLimit ) {
     }
 }
 
+void leaveBest(list<node*>& paths, int maxLimit )
+{
+    if( paths.size( ) <= maxLimit )
+        return;
+
+    paths.sort(lessPtr<node*>);
+    auto it = paths.begin();
+    for( int i = 0; i < maxLimit; i++ )
+        it++;
+    auto temp = it;
+    while( temp != paths.end() ) {
+        delete *temp;
+        temp++;
+    }
+    paths.erase(it, paths.end());
+}
+
 void recalcPseudoFlightTable(list<node*> &paths) {  // paths - pointers on last nodes !
     const float mult = 0.95;
     for( node* p : paths ) {
@@ -873,7 +890,7 @@ void probabilisticDynamic() {
         }
         
         // put all paths after this day flights into outputList with some probability
-        auto &dayFlights = pseudoFlightTable->at(i);
+        auto &dayFlights = flightTable->at(i);
         for( auto path : inputList ) {
             for( int to = 0; to < N_cities; to++ ) {
                 if( path->city == to )
@@ -903,7 +920,7 @@ void probabilisticDynamic() {
         }
         DEBUG("day " << i << " out paths not filtered: " << outputList.size());
 
-        if( TIMEOUT ) {
+        if( TIMEOUT || !outputList.size()) {
             clearPtrList(inputList);
             clearPtrList(outputList);
             return;
@@ -911,7 +928,8 @@ void probabilisticDynamic() {
 
         if( i != N_zone - 1 ) {
 //            filterListProbabilistic(outputList, n_out);
-            filterListRandom(outputList, n_out);
+//            filterListRandom(outputList, n_out);
+            leaveBest(outputList, n_out);
             DEBUG("out paths filtered: " << outputList.size());
             swap(inputList, outputList);
             clearPtrList(outputList);
@@ -920,16 +938,13 @@ void probabilisticDynamic() {
 
     DEBUG("paths on output: " << outputList.size());
     
-    recalcPseudoFlightTable(outputList);
-    recalcPathsFromPseudo(outputList);
-    
     node* n = *(min_element(outputList.begin(), outputList.begin(), lessPtr<node*>));
     n->sum = n->costTillDay;
     while( n->prevNode ) {
         n->prevNode->sum = n->sum;
         n = n->prevNode;
     }
-    DEBUG("best cost: " << n->sum);
+//    cout << "best cost: " << n->sum << endl;
 //    n->dumpAnswer();
 
     if( pathLimits::bestNode ) {
