@@ -43,7 +43,9 @@ typedef uint16_t cost_t;
 // dimension: Zones x Cities x Cities
 typedef vector<vector<vector<cost_t >>> FlightTable;
 unique_ptr<FlightTable> flightTable;
+unique_ptr<FlightTable> pseudoFlightTable;
 #define FLIGHT(day, from, to) (flightTable->at(day)[from][to])
+#define PSEUDO_FLIGHT(day, from, to) (pseudoFlightTable->at(day)[from][to])
 
 auto Timeout = chrono::milliseconds(3000 - 100);
 chrono::time_point<chrono::system_clock> startTime;
@@ -621,6 +623,9 @@ void init()
         Timeout = chrono::milliseconds(15000 - reserve_ms);
 
     pathLimits::init();
+    
+    pseudoFlightTable.reset(new FlightTable);
+    *pseudoFlightTable.get() = *flightTable.get();
 }
 
 vector<int> randomPermutation(const vector<int> inp) {
@@ -777,6 +782,52 @@ void filterListProbabilistic(list<node*>& paths, int maxLimit ) {
 #endif
 }
 
+void filterListRandom(list<node*>& paths, int maxLimit ) {
+    if( paths.size( ) <= maxLimit )
+        return;
+
+    int n_inp = paths.size();
+    for( auto it = paths.begin(); it != paths.end();  ) {
+        if( rand() % n_inp < maxLimit )
+            it++;
+        else {
+            delete *it;
+            paths.erase(it++);
+        }
+    }
+}
+
+void recalcPseudoFlightTable(list<node*> &paths) {  // paths - pointers on last nodes !
+    const float mult = 0.95;
+    for( node* p : paths ) {
+        node* n = p->prevNode;
+        while( n ) {
+            cost_t* cost = &PSEUDO_FLIGHT(n->day, n->city, n->nextNode->city);
+            int newCost = round((*cost) * mult);
+            if( newCost == *cost && *cost > 1 )
+                *cost -= 1;
+            else
+                *cost = newCost;
+            
+            n = n->prevNode;
+        }
+    }
+}
+
+void recalcPathsFromPseudo(list<node*> &paths) {  // paths - pointers on last nodes !
+    const float mult = 0.95;
+    for( node* p : paths ) {
+        node* n = p->prevNode;
+        while( n->prevNode )
+            n = n->prevNode;
+        
+        while( n->nextNode ) {
+            n->nextNode->costTillDay = n->costTillDay + FLIGHT(n->day, n->city, n->nextNode->city);
+            n = n->nextNode;
+        }
+    }
+}
+
 void probabilisticDynamic() {
     const int M = 100;  // desired num of paths on exit
     updateGrowthCoefficients();
@@ -803,15 +854,47 @@ void probabilisticDynamic() {
             clearPtrList(outputList);
             return;
         }
-
-        // put all paths after this day flights into outputList
-        auto &dayFlights = flightTable->at(i);
+    
+        int nextDay = i + 1;
+        int n_inp = growthCoefficients[i] * inputList.size();
+        int n_out = desiredPathNumForDay[nextDay];
+        bool mustFilter = (( n_inp > n_out ) && ( i < N_zone - 1 ));
+        int worstPath, bestPath;
+        int meanPath = 0;
+        if( mustFilter ) {
+            worstPath = (*max_element(inputList.begin( ), inputList.end( ), lessPtr<node*>))->costTillDay;
+            worstPath += pathLimits::worstDayCosts[i];
+            bestPath = (*min_element(inputList.begin( ), inputList.end( ), lessPtr<node*>))->costTillDay;
+            bestPath += pathLimits::bestDayCosts[i];
+            for( auto p : inputList )
+                meanPath += p->costTillDay;
+            meanPath /= inputList.size();
+            meanPath += pathLimits::meanDayCosts[i];
+        }
+        
+        // put all paths after this day flights into outputList with some probability
+        auto &dayFlights = pseudoFlightTable->at(i);
         for( auto path : inputList ) {
             for( int to = 0; to < N_cities; to++ ) {
                 if( path->city == to )
                     continue;
                 if( cost_t cost = dayFlights[path->city][to] ) {
                     if( path->checkFlightTo(to) ) {
+                        if( mustFilter ) {
+                            int costNext = path->costTillDay + cost;
+                            double factor = 1;
+                            if( costNext > meanPath ) {
+                                factor = (float) (worstPath - costNext) / ( worstPath - meanPath );
+                            }
+                            else if( costNext < meanPath ) {
+                                factor = (costNext - bestPath + (float) n_inp / n_out * ( meanPath - costNext ))
+                                         / ( meanPath - bestPath );
+                            }
+                            long randMod = (factor > 0) ? (long) (n_inp / factor) : numeric_limits<long>::max();
+                            long num = (rand() * (long) RAND_MAX + rand()) % randMod;
+                            if( num > n_out )
+                                continue;
+                        }
                         outputList.push_back(new node(*path));
                         outputList.back()->applyFlight(to, cost);
                     }
@@ -827,7 +910,8 @@ void probabilisticDynamic() {
         }
 
         if( i != N_zone - 1 ) {
-            filterListProbabilistic(outputList, desiredPathNumForDay[i + 1]);
+//            filterListProbabilistic(outputList, n_out);
+            filterListRandom(outputList, n_out);
             DEBUG("out paths filtered: " << outputList.size());
             swap(inputList, outputList);
             clearPtrList(outputList);
@@ -835,23 +919,28 @@ void probabilisticDynamic() {
     }
 
     DEBUG("paths on output: " << outputList.size());
-
-    outputList.sort(lessPtr<node*>);
-    DEBUG("best path cost: " << outputList.front()->costTillDay);
-
-    node* n = outputList.front();
+    
+    recalcPseudoFlightTable(outputList);
+    recalcPathsFromPseudo(outputList);
+    
+    node* n = *(min_element(outputList.begin(), outputList.begin(), lessPtr<node*>));
     n->sum = n->costTillDay;
     while( n->prevNode ) {
         n->prevNode->sum = n->sum;
         n = n->prevNode;
     }
+    DEBUG("best cost: " << n->sum);
 //    n->dumpAnswer();
 
-    if( pathLimits::bestNode && (pathLimits::bestNode->sum > n->sum) ) {
-        delete pathLimits::bestNode;
-        pathLimits::bestNode = new node(*n);
+    if( pathLimits::bestNode ) {
+        if( pathLimits::bestNode->sum > n->sum ) {
+            delete pathLimits::bestNode;
+            pathLimits::bestNode = new node(*n);
+        }
     }
-
+    else
+        pathLimits::bestNode = new node(*n);
+    
     clearPtrList(inputList);
     clearPtrList(outputList);
 }
@@ -904,21 +993,16 @@ int main(int argc, char **argv)
         }
         delete lastNode;
     }
-
+    
     int counter = 0;
     while( !TIMEOUT ) {
         probabilisticDynamic( );
         counter++;
     }
-
+    
     pathLimits::bestNode->dumpAnswer( );
     delete pathLimits::bestNode;
-
+    
     DEBUG("Num of loops: " << counter);
-
-//#ifdef LIMITS_STATISTICS
-//    cout << "good check limits: " << pathLimits::checkGood << "; bad check limits: " << pathLimits::checkBad << endl;
-//#endif
-
     return 0;
 }
