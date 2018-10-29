@@ -17,8 +17,8 @@ using namespace std;
 
 #define MAX_N 300
 
-const string filename = "../ts_test/datasets/2.in";
-//const string filename = "";
+//const string filename = "../datasets/4.in";
+const string filename = "";
 
 //#define DEBUG_OUT
 #ifdef DEBUG_OUT
@@ -236,7 +236,7 @@ vector<int>    meanCostsForDay;
 // pathCostBestForDay consists of min found for this day cost
 vector<int> bestPathCostForDay;
 
-node bestNode(0, 0);
+node *bestNode;
 
 void init( )
 {
@@ -313,7 +313,7 @@ static int checkBad = 0;
 
 inline bool checkForLimits( int day, int currentCost ) {
 #ifdef LIMITS_STATISTICS
-    if( currentCost + bestCostsToTheEnd[day] < bestNode.sum ) {
+    if( currentCost + bestCostsToTheEnd[day] < bestNode->sum ) {
         checkGood++;
         return true;
     }
@@ -847,11 +847,9 @@ void probabilisticDynamic() {
     }
 //    n->dumpAnswer();
 
-    if( pathLimits::bestNode.sum && (pathLimits::bestNode.sum > n->sum) ) {
-        delete pathLimits::bestNode.nextNode;
-        pathLimits::bestNode.nextNode = nullptr;
-        pathLimits::bestNode = *n;
-        outputList.erase(outputList.begin());
+    if( pathLimits::bestNode && (pathLimits::bestNode->sum > n->sum) ) {
+        delete pathLimits::bestNode;
+        pathLimits::bestNode = new node(*n);
     }
 
     clearPtrList(inputList);
@@ -879,9 +877,9 @@ int main(int argc, char **argv)
     vector<int> zonesWithStart = zonesWithoutStart;
     zonesWithStart.push_back(startZone);
     greedyOnCities(&start, zonesWithStart);
-    pathLimits::bestNode = start;
-    pathLimits::updateBestDayPaths(&pathLimits::bestNode);
-    pathLimits::bestNode.dumpPath();
+    pathLimits::bestNode = new node(start);
+    pathLimits::updateBestDayPaths(pathLimits::bestNode);
+    pathLimits::bestNode->dumpPath();
 
     // greedy backward
     for( int i = zones[startZone].firstCity; i<= zones[startZone].lastCity; i++ ) {
@@ -897,25 +895,26 @@ int main(int argc, char **argv)
 
             pathLimits::updateBestDayPaths(startNode);
 
-            if( startNode->sum < pathLimits::bestNode.sum ) {
+            if( startNode->sum < pathLimits::bestNode->sum ) {
                 DEBUG("new sum (backward): " << startNode->sum);
-                if( pathLimits::bestNode.nextNode ) {
-                    delete pathLimits::bestNode.nextNode;
-                    pathLimits::bestNode.nextNode = nullptr;
-                }
+                delete pathLimits::bestNode;
                 node *n = new node(*startNode);
-                pathLimits::bestNode = *n;
+                pathLimits::bestNode = new node(*startNode);
             }
         }
         delete lastNode;
     }
 
-    while( !TIMEOUT )
-        probabilisticDynamic();
+    int counter = 0;
+    while( !TIMEOUT ) {
+        probabilisticDynamic( );
+        counter++;
+    }
 
-    pathLimits::bestNode.dumpAnswer( );
+    pathLimits::bestNode->dumpAnswer( );
+    delete pathLimits::bestNode;
 
-//    DEBUG("Num of permutations: " << counter << ", successfull of them: " << successCounter);
+    DEBUG("Num of loops: " << counter);
 
 //#ifdef LIMITS_STATISTICS
 //    cout << "good check limits: " << pathLimits::checkGood << "; bad check limits: " << pathLimits::checkBad << endl;
