@@ -832,7 +832,7 @@ void recalcPseudoFlightTable(list<node*> &paths) {  // paths - pointers on last 
 }
 
 void recalcPathsFromPseudo(list<node*> &paths) {  // paths - pointers on last nodes !
-    const float mult = 0.95;
+    const float mult = 0.99;
     for( node* p : paths ) {
         node* n = p->prevNode;
         while( n->prevNode )
@@ -951,11 +951,14 @@ void probabilisticDynamic() {
                         if ( mustFilter ) {
                             int    costNext = path->costTillDay + cost;
                             double factor   = 1;
+                            const float power = 1;
                             if ( costNext > meanPath ) {
-                                factor = (float) (worstPath - costNext) / (worstPath - meanPath);
+                                factor = (1.f - pow((float) (costNext - meanPath) / (worstPath - meanPath), power)) * ((power + 1) / 2);
+                                // (power + 1) / 2 - rate of 1/2 and integral (x^n) from 0 to 1
                             }
                             else if ( costNext < meanPath ) {
-                                factor = (costNext - bestPath + (float) n_inp / n_out * (meanPath - costNext)) / (meanPath - bestPath);
+                                factor = pow((float) (costNext - meanPath) / (worstPath - meanPath), power) * ((power + 1) / 2);
+                                factor = (1 + factor * (n_inp / n_out - 1));
                             }
                             long randMod = (factor > 0) ? (long) (n_inp / factor) : numeric_limits<long>::max( );
                             long num     = (rand( ) * (long) RAND_MAX + rand( )) % randMod;
