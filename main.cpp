@@ -17,7 +17,7 @@ using namespace std;
 
 #define MAX_N 300
 
-const string filename = "../datasets/1.in";
+const string filename = "../datasets/4.in";
 //const string filename = "";
 
 //#define DEBUG_OUT
@@ -845,6 +845,57 @@ void recalcPathsFromPseudo(list<node*> &paths) {  // paths - pointers on last no
     }
 }
 
+void runGreedyFromMiddle(node* mid) {
+    vector<int> zonesWithStart(N_zone-1);
+    int count = 0;
+    for( int i=0; i<N_zone-1; i++, count++ ) {
+        if( count == startZone )
+            count++;
+        zonesWithStart[i] = count;
+    }
+    
+    // prepare vector of zones and go to day 0
+    node* n = mid;
+    count = 0;
+    while( n->day != 0 ) {
+        iter_swap(zonesWithStart.begin() + count, find(zonesWithStart.begin() + count, zonesWithStart.end(), cities[n->city].zone));
+        n = n->prevNode;
+        count++;
+    }
+    zonesWithStart.push_back(startZone);
+    
+    // go forward to day mid->day
+    node* start = new node(*n);
+    n = start;
+    while( n->nextNode )
+        n = n->nextNode;
+    greedyOnCities(n, zonesWithStart);
+    if( !n->sum ) {
+        delete start;
+        return;
+    }
+    
+    pathLimits::updateBestDayPaths(n);
+    // update sum back to startnode
+    while( n->prevNode ) {
+        n->prevNode->sum = n->sum;
+        n = n->prevNode;
+    }
+    
+    if( pathLimits::bestNode ) {
+        if ( pathLimits::bestNode->sum > start->sum ) {
+            cout << "run greedy day " << mid->day << ": " << start->sum << endl;
+            delete pathLimits::bestNode;
+            pathLimits::bestNode = new node(*start);
+        }
+    }
+    else
+        pathLimits::bestNode = new node(*start);
+    
+    delete start;
+}
+
+#define GOTO_GREEDY
 void probabilisticDynamic() {
     const int M = 100;  // desired num of paths on exit
     updateGrowthCoefficients();
@@ -913,12 +964,20 @@ void probabilisticDynamic() {
                         }
                         outputList.push_back(new node(*path));
                         outputList.back( )->applyFlight(to, cost);
+                        
+#ifdef GOTO_GREEDY
+                        // go to greedy with good path
+                        if( nextDay != N_zone && outputList.back()->costTillDay < pathLimits::bestPathCostForDay[outputList.back()->day]) {
+                            pathLimits::bestPathCostForDay[outputList.back()->day] = outputList.back()->costTillDay;
+                            runGreedyFromMiddle(outputList.back());
+                        }
+#endif
                     }
                 }
             }
         }
         DEBUG("day " << i << " out paths not filtered: " << outputList.size());
-
+        
         if( TIMEOUT || !outputList.size()) {
             clearPtrList(inputList);
             clearPtrList(outputList);
@@ -950,6 +1009,7 @@ void probabilisticDynamic() {
         if( pathLimits::bestNode->sum > n->sum ) {
             delete pathLimits::bestNode;
             pathLimits::bestNode = new node(*n);
+            cout << "\tnew best cost: " << n->sum << endl;
         }
     }
     else
@@ -995,8 +1055,6 @@ int main(int argc, char **argv)
         if( startNode ) {
             DEBUG("backward:");
             startNode->dumpPath();
-
-            pathLimits::updateBestDayPaths(startNode);
 
             if( startNode->sum < pathLimits::bestNode->sum ) {
                 DEBUG("new sum (backward): " << startNode->sum);
